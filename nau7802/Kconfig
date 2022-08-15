@@ -10,26 +10,35 @@ config NAU7802
 
 if NAU7802
 
+choice
+	prompt "NAU7802 trigger mode"
+	default NAU7802_TRIGGER_NONE
+
+config NAU7802_TRIGGER_NONE
+	bool "No trigger"
+
+config NAU7802_TRIGGER_GLOBAL_THREAD
+	depends on GPIO
+	select NAU7802_TRIGGER
+	bool "Use global thread"
+
+config NAU7802_TRIGGER_OWN_THREAD
+	depends on GPIO
+	select NAU7802_TRIGGER
+	bool "Use own thread"
+
+endchoice
+
 config NAU7802_TRIGGER
 	bool "NAU7802 trigger mode"
-	help
-	  Set to enable trigger mode using gpio interrupt, where
-	  interrupts are configured to line DRDY PIN.
-if NAU7802_TRIGGER
 
-choice NAU7802_TRIG_POL
-	prompt "Trigger polarity"
-	help
-	  Specify the polarity of the DRDY interrupt pin.
+if NAU7802_TRIGGER
 
 config NAU7802_TRIG_HIGH_POL
 	bool "Trigger polarity high"
 
-config NAU7802_TRIG_LOW_POL
-	bool "Trigger polarity low"
-endchoice
-
 endif # NAU7802_TRIGGER
+
 config NAU7802_LDO
 	int "ADC LDO voltage"
 	default 8
@@ -73,4 +82,7 @@ config NAU7802_SPS
 	  3: 80 Hz
 	  4: 320 Hz
 
+config NAU7802_SINGLE_CHN
+	bool "Enable channel 2 compensatio cap (330/470 pF)"
+	
 endif # NAU7802
