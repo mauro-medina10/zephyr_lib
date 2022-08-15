@@ -12,28 +12,19 @@
 //----------------------------------------------------------------------
 //	INCLUCIÓN DE ARCHIVOS
 //----------------------------------------------------------------------
-#include <atmel_start.h>
-#include <hpl_time_measure.h>
+#include <stdbool.h>
+#include <stdint.h>
 
-#include "../SRC/NAU7802/ADC_NAU7802.h"
-#include "SRC\Drivers\Drv_I2C.h"
-#include "SRC\Drivers\Drv_SYSTICK.h"
-#include "SRC\RTT\Macros.h"
-#include "SRC\principal\Estados.h"
-#include "SRC\Libreria\Libreria.h"
+#include <zephyr.h>
+#include <errno.h>
 
-#include "../RTT/rtt_log.h"
-
-/* LOGGING MODULE REGISTER */
-#define NAU7802_RTT_TERMINAL 1
-#define NAU7802_RTT_LEVEL 2
-
-RTT_LOG_REGISTER(nau7802_test, NAU7802_RTT_LEVEL, NAU7802_RTT_TERMINAL);
+#include "Drv_I2C.h"	
 //----------------------------------------------------------------------
 //	MACROS
 //----------------------------------------------------------------------
 #define ADC_DISABLE_IRQ()	if(irq_pin != 0xFFFFFFFF)ext_irq_disable((const uint32_t) irq_pin)
 #define ADC_ENABLE_IRQ()	if(irq_pin != 0xFFFFFFFF)ext_irq_enable((const uint32_t) irq_pin)
+ 
 
 //#define NAU7802_LDO_OFF
 //#define NAU7802_I2C_PULL_S
@@ -82,9 +73,7 @@ static float _calibrationFactor;				//This is m. User provides this number so th
 //	Param de salida:	ninguno
 //----------------------------------------------------------------------
 static void nau7802_irq_cb(void){
-#if DEBUG > 3	
-	RTT_LOG("Internal IRQ.\n");
-#endif
+
 	irq_data_raw = nau7802_getReading();
 	
 	irq_drdy_flg = true;
@@ -119,7 +108,6 @@ bool nau7802_begin(/*TwoWire &wirePort,*/ bool initialize)
 
 		result &= nau7802_check_chip_id();
 
-		RTT_LOG("NAU7802 detected: %s.\n", RTT_CHECK(result));
 #ifdef NAU7802_LDO_OFF
 		result &= nau7802_LDO_off();
 #else
@@ -476,7 +464,6 @@ int32_t nau7802_getAverage(uint8_t averageAmount)
 	
 	total /= averageAmount;
 
-	RTT_LOG("Average time: %d.\n", NAU7802_AVERAGE_TIMEOUT - uiTmrPsj);
 	
 	return (total);
 }

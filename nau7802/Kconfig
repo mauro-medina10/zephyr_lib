@@ -1,0 +1,76 @@
+# Copyright 2021 The Chromium OS Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
+config NAU7802
+	bool "NAU7802 24-bit Dual Channel ADC"
+	depends on I2C
+	help
+	  Enable driver for NAU7802 ADC.
+
+if NAU7802
+
+config NAU7802_TRIGGER
+	bool "NAU7802 trigger mode"
+	help
+	  Set to enable trigger mode using gpio interrupt, where
+	  interrupts are configured to line DRDY PIN.
+if NAU7802_TRIGGER
+
+choice NAU7802_TRIG_POL
+	prompt "Trigger polarity"
+	help
+	  Specify the polarity of the DRDY interrupt pin.
+
+config NAU7802_TRIG_HIGH_POL
+	bool "Trigger polarity high"
+
+config NAU7802_TRIG_LOW_POL
+	bool "Trigger polarity low"
+endchoice
+
+endif # NAU7802_TRIGGER
+config NAU7802_LDO
+	int "ADC LDO voltage"
+	default 8
+	help
+	  Specify the default LDO voltage output value.
+	  Valid values are:
+	  0: LDO 4.5V 
+	  1: LDO 4.2V 
+	  2: LDO 3.9V
+	  3: LDO 3.6V
+	  4: LDO 3.3V
+	  5: LDO 3.0V
+	  6: LDO 2.7V
+	  7: LDO 2.4V
+	  8: LDO off (default)
+
+config NAU7802_PGA
+	int "ADC PGA gain"
+	default 0
+	help
+	  Specify the default GPA gain value.
+	  Valid values are:
+	  0: GPA x1 (default) 
+	  1: GPA x2 
+	  2: GPA x4
+	  3: GPA x8
+	  4: GPA x16
+	  5: GPA x32
+	  6: GPA x64
+	  7: GPA x128
+
+config NAU7802_SPS
+	int "ADC sampling frequency (SPS)"
+	default 0
+	help
+	  Specify the default GPA gain value.
+	  Valid values are:
+	  0: 10 Hz (default) 
+	  1: 20 Hz 
+	  2: 40 Hz
+	  3: 80 Hz
+	  4: 320 Hz
+
+endif # NAU7802
