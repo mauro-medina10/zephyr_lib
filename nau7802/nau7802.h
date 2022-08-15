@@ -1,28 +1,19 @@
-//----------------------------------------------------------------------
-//						KRETZ S.A. 	-	 Balanza PS
-//----------------------------------------------------------------------
-//	ARCHIVO:	ADC_NAU7802.h
-//----------------------------------------------------------------------
-//	OBJETIVO:	Definiciones utilizadas por el ADC NAU7802.
-//----------------------------------------------------------------------
-//	HISTORIA: 	01-Feb-2022			V1.0			Nicolás Matteucci
-//----------------------------------------------------------------------
-
-#ifndef NAU7802_h
-#define NAU7802_h
+/*
+ * Copyright (c) 2022 Mauro Medina Serangeli
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#ifndef ZEPHYR_DRIVERS_SENSOR_NAU7802_H_
+#define ZEPHYR_DRIVERS_SENSOR_NAU7802_H_
 
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "SRC\Include\PS_IO.h"
-#include <hal_ext_irq.h>
+#include <drivers/gpio.h>
+#include <drivers/i2c.h>
 
-//DEFINITIONS AND CONFIGURATIONS
-// #define CONFIG_NAU7802_REV_CODE			//Revision code function available
-// #define CONFIG_NAU7802_SCALE				//Scale functionalities available
-// #define CONFIG_NAU7802_TEMP				//Temperature sensing functionality available
 
-#define NAU7802_INT_DEFAULT_PIN ADC24_INT_PIN
+#define NAU7802_INT_DEFAULT_PIN 0
 #define ADC_I2C_ADDR 0x2A
 #define NAU7802_ID 0x0F
 
