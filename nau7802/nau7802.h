@@ -252,9 +252,9 @@ int nau7802_LDO_off(void);
 //Comunication
 int nau7802_setBit(uint8_t bitNumber, uint8_t registerAddress);					//Mask & set a given bit within a register
 int nau7802_clearBit(uint8_t bitNumber, uint8_t registerAddress);				//Mask & clear a given bit within a register
-int nau7802_getBit(uint8_t bitNumber, uint8_t registerAddress);					//Return a given bit within a register
-int nau7802_getRegister(uint8_t registerAddress, uint8_t *data);				//Get contents of a register
-int nau7802_setRegister(uint8_t registerAddress, uint8_t value);				//Send a given value to be written to given address. Return true if successful
+int nau7802_getBit(uint8_t bitNumber, uint8_t registerAddress, uint8_t *data);					//Return a given bit within a register
+int nau7802_getRegister(const struct device *dev, uint8_t registerAddress, uint8_t *value);				//Get contents of a register
+int nau7802_setRegister(const struct device *dev, uint8_t registerAddress, uint8_t value);				//Send a given value to be written to given address. Return true if successful
 
 
 /* TODO: Add scale functionality? 
