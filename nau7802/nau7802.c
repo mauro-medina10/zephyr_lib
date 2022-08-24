@@ -9,6 +9,7 @@
 //----------------------------------------------------------------------
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <zephyr.h>
 #include <errno.h>
@@ -26,8 +27,8 @@
 //----------------------------------------------------------------------
 
 //NAU7802 IRQ variables
-static uint32_t irq_pin 				= 0xFFFFFFFF;
-static ext_irq_cb_t irq_user_cb 		= NULL;
+// static uint32_t irq_pin 				= 0xFFFFFFFF;
+// static ext_irq_cb_t irq_user_cb 		= NULL;
 
 static volatile bool irq_drdy_flg 		= false;
 static volatile int32_t irq_data_raw 	= 0;
@@ -53,11 +54,12 @@ static float _calibrationFactor;		//This is m. User provides this number so that
 //----------------------------------------------------------------------
 //	Local Functions
 //----------------------------------------------------------------------
-static int nau7802_waitForCalibrateAFE(uint32_t timeout_ms);
-static void nau7802_beginCalibrateAFE(void);
+static int nau7802_waitForCalibrateAFE(const struct device *dev, uint64_t timeout_ms);
+static void nau7802_beginCalibrateAFE(const struct device *dev);
+#ifdef CONFIG_NAU7802_TRIGGER
 static int32_t nau7802_internal_irq_enable(void);
 static int32_t nau7802_internal_irq_disable(void);
-
+#endif
 //----------------------------------------------------------------------
 //	Funci�n:			nau7802_irq_cb()
 //----------------------------------------------------------------------
@@ -70,6 +72,7 @@ static int32_t nau7802_internal_irq_disable(void);
 //----------------------------------------------------------------------
 //	Param de salida:	ninguno
 //----------------------------------------------------------------------
+#ifdef CONFIG_NAU7802_TRIGGER
 static void nau7802_irq_cb(void){
 
 	irq_data_raw = nau7802_getReading();
@@ -86,115 +89,138 @@ static int32_t get_irq_data(void){
 	
 	return irq_data_raw;
 }
-
+#endif
 //Sets up the NAU7802 for basic function
 //If initialize is true (or not specified), default init and calibration is performed
 //If initialize is false, then it's up to the caller to initalize and calibrate
 //Returns true upon completion
-int nau7802_begin(void)
+int nau7802_begin(const struct device *dev)
 {
 	int ret = 0;		//Accumulate a result as we do the setup
 
-	ret &= nau7802_powerUp();											//Power on analog and digital sections of the scale
+	ret = nau7802_powerUp(dev);											//Power on analog and digital sections of the scale
 
-	ret &= nau7802_check_chip_id();
+	ret |= nau7802_check_chip_id(dev);
 
 	if(ret != 0)
 	{
 		return ret;
 	}
 #if (CONFIG_NAU7802_LDO == 8)
-	result &= nau7802_LDO_off();
+	result |= nau7802_LDO_off(dev);
 #else
-	ret &= nau7802_setLDO(CONFIG_NAU7802_LDO);								//Set LDO to 3.3V note: 2v4 not recommended (doesnt work) 
+	ret |= nau7802_setLDO(dev, /*CONFIG_NAU7802_LDO*/NAU7802_LDO_2V7);								//Set LDO to 3.3V note: 2v4 not recommended (doesnt work) 
 #endif
-	ret &= nau7802_setGain(CONFIG_NAU7802_PGA);							//Set gain to 128
+	ret |= nau7802_setGain(dev, /* CONFIG_NAU7802_PGA */NAU7802_GAIN_8);							//Set gain to 128
 
-	ret &= nau7802_setSampleRate(CONFIG_NAU7802_SPS); //40					//Set samples per second to 10
+	ret |= nau7802_setSampleRate(dev, /* CONFIG_NAU7802_SPS */NAU7802_SPS_40); //40					//Set samples per second to 10
 	
-	ret &= nau7802_setRegister(NAU7802_ADC, 0x30);						//Turn off CLK_CHP. From 9.1 power on sequencing.	
+	ret |= nau7802_setRegister(dev, NAU7802_ADC, 0x30);						//Turn off CLK_CHP. From 9.1 power on sequencing.	
 #ifdef CONFIG_NAU7802_SINGLE_CHN
-	result &= nau7802_setBit(NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);	//Enable 330pF decoupling cap on chan 2. From 9.14 application circuit note
+	result &= nau7802_setBit(dev, NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);	//Enable 330pF decoupling cap on chan 2. From 9.14 application circuit note
 #endif	
-	ret &= nau7802_calibrateAFE();										//Re-cal analog front end when we change gain, sample rate, or channel
+	ret |= nau7802_calibrateAFE(dev);										//Re-cal analog front end when we change gain, sample rate, or channel
 	
 	//Get 6 samples to stabilize adc
-	if(ret)
+	if(ret == 0)
 	{
+#ifdef CONFIG_NAU7802_TRIGGER		
 		nau7802_internal_irq_enable();
-		nau7802_start_conversions();
+#endif		
+		nau7802_start_conversions(dev);
 		for(uint8_t i = 0; i < NAU7802_SETTLE_SAMPLES; i++){
-
+#ifdef CONFIG_NAU7802_TRIGGER
 			get_irq_data();
+#else
+			while(nau7802_data_available(dev) != 0);
+
+			nau7802_getReading(dev, NULL);
+#endif
 		}
+#ifdef CONFIG_NAU7802_TRIGGER		
 		nau7802_internal_irq_disable();
-		nau7802_stop_conversions();
+#endif		
+		nau7802_stop_conversions(dev);
 	}
 	return (ret);
 }
 
-int nau7802_start_conversions(void){
+int nau7802_start_conversions(const struct device *dev){
 	
-	nau7802_getReading(NULL);
+	// nau7802_getReading(NULL);
 
-	return nau7802_setBit(NAU7802_PU_CTRL_CS, NAU7802_PU_CTRL);
+	return nau7802_setBit(dev, NAU7802_PU_CTRL_CS, NAU7802_PU_CTRL);
 }
 
-int nau7802_stop_conversions(void){
+int nau7802_stop_conversions(const struct device *dev){
 	
-	return nau7802_clearBit(NAU7802_PU_CTRL_CS, NAU7802_PU_CTRL);
+	return nau7802_clearBit(dev, NAU7802_PU_CTRL_CS, NAU7802_PU_CTRL);
 }
 
 //Returns true if Cycle Ready bit is set (conversion is complete)
-int nau7802_data_available()
+int nau7802_data_available(const struct device *dev)
 {
-	return !(nau7802_getBit(NAU7802_PU_CTRL_CR, NAU7802_PU_CTRL) == 1);
+	int ret;
+	uint8_t data;
+
+	ret = nau7802_getBit(dev, NAU7802_PU_CTRL_CR, NAU7802_PU_CTRL, &data);
+
+	return (ret || !(data == 1));
 }
 
 
 //Calibrate analog front end of system. Returns true if CAL_ERR bit is 0 (no error)
 //Takes approximately 344ms to calibrate; wait up to 1000ms.
 //It is recommended that the AFE be re-calibrated any time the gain, SPS, or channel number is changed.
-int nau7802_calibrateAFE()
+int nau7802_calibrateAFE(const struct device *dev)
 {
-	nau7802_beginCalibrateAFE(); 
-	return(nau7802_waitForCalibrateAFE(1000)); 
+	nau7802_beginCalibrateAFE(dev); 
+	return(nau7802_waitForCalibrateAFE(dev, 1000)); 
 }
 
 
 //Begin asynchronous calibration of the analog front end.
 // Poll for completion with calAFEStatus() or wait with waitForCalibrateAFE()
-static void nau7802_beginCalibrateAFE(void)
+static void nau7802_beginCalibrateAFE(const struct device *dev)
 {
-	nau7802_setBit(NAU7802_CTRL2_CALS, NAU7802_CTRL2);
+	nau7802_setBit(dev, NAU7802_CTRL2_CALS, NAU7802_CTRL2);
 }
 
 
 //Check calibration status.
-static NAU7802_Cal_Status nau7802_calAFEStatus(void)
+static NAU7802_Cal_Status nau7802_calAFEStatus(const struct device *dev)
 {
-	if (nau7802_getBit(NAU7802_CTRL2_CALS, NAU7802_CTRL2))
+	int ret;
+	uint8_t data;
+
+	ret = nau7802_getBit(dev, NAU7802_CTRL2_CALS, NAU7802_CTRL2, &data);
+	if (ret == 0 && data == 1)
 	{
 		return NAU7802_CAL_IN_PROGRESS;
 	}
 
-	if (nau7802_getBit(NAU7802_CTRL2_CAL_ERROR, NAU7802_CTRL2))
+	ret |= nau7802_getBit(dev, NAU7802_CTRL2_CAL_ERROR, NAU7802_CTRL2, &data);
+	if (ret == 0 && data == 1)
 	{
 		return NAU7802_CAL_FAILURE;
 	}
 
-	// Calibration passed
-	return NAU7802_CAL_SUCCESS;
+	if(ret == 0)
+	{
+		// Calibration passed
+		return NAU7802_CAL_SUCCESS;
+	}
+	return ret;
 }
 
 
 //Wait for asynchronous AFE calibration to complete with optional timeout.
-static int nau7802_waitForCalibrateAFE(uint64_t timeout_ms)
+static int nau7802_waitForCalibrateAFE(const struct device *dev, uint64_t timeout_ms)
 {
 	NAU7802_Cal_Status cal_ready = NAU7802_CAL_IN_PROGRESS;
 	uint64_t t_ini = k_uptime_get();
 
-	while ((cal_ready = nau7802_calAFEStatus()) == NAU7802_CAL_IN_PROGRESS)
+	while ((cal_ready = nau7802_calAFEStatus(dev)) == NAU7802_CAL_IN_PROGRESS)
 	{
 		if ((k_uptime_get() - t_ini) >= timeout_ms)
 		{
@@ -214,107 +240,125 @@ static int nau7802_waitForCalibrateAFE(uint64_t timeout_ms)
 
 //Set the readings per second
 //10, 20, 40, 80, and 320 samples per second is available
-int nau7802_setSampleRate(uint8_t rate)
+int nau7802_setSampleRate(const struct device *dev,  uint8_t rate)
 {
+	int ret;
 	uint8_t value = 0;
-	int ret = 0;
 
 	if (rate > 0b111)
 	{
 		rate = 0b111;		//Error check
 	}
 
-	nau7802_getRegister(NAU7802_CTRL2, &value);
+	ret = nau7802_getRegister(dev, NAU7802_CTRL2, &value);
+	if(ret != 0)
+	{
+		return ret;
+	}
 
 	value &= 0b10001111;	//Clear CRS bits
 	value |= rate << 4;		//Mask in new CRS bits
 
-	return (nau7802_setRegister(NAU7802_CTRL2, value));
+	return (nau7802_setRegister(dev, NAU7802_CTRL2, value));
 }
 
 
 //Select between 1 and 2
-int nau7802_setChannel(uint8_t channelNumber)
+int nau7802_setChannel(const struct device *dev, uint8_t channelNumber)
 {
 	if (channelNumber == NAU7802_CHANNEL_1)
 	{
-		nau7802_setBit(NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);
+		nau7802_setBit(dev, NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);
 
-		return (nau7802_clearBit(NAU7802_CTRL2_CHS, NAU7802_CTRL2));	//Channel 1 (default)
+		return (nau7802_clearBit(dev, NAU7802_CTRL2_CHS, NAU7802_CTRL2));	//Channel 1 (default)
 	}
-	else
+	else if(channelNumber == NAU7802_CHANNEL_2)
 	{
-		nau7802_clearBit(NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);
+		nau7802_clearBit(dev, NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);
 
-		return (nau7802_setBit(NAU7802_CTRL2_CHS, NAU7802_CTRL2));		//Channel 2
+		return (nau7802_setBit(dev, NAU7802_CTRL2_CHS, NAU7802_CTRL2));		//Channel 2
 	}
+
+	return -EINVAL;
 }
 
-int nau7802_LDO_on(void){
+int nau7802_LDO_on(const struct device *dev){
 	
-	return nau7802_setBit(NAU7802_PU_CTRL_AVDDS, NAU7802_PU_CTRL);
+	return nau7802_setBit(dev, NAU7802_PU_CTRL_AVDDS, NAU7802_PU_CTRL);
 }
 
-int nau7802_LDO_off(void){
+int nau7802_LDO_off(const struct device *dev){
 	
-	return nau7802_clearBit(NAU7802_PU_CTRL_AVDDS, NAU7802_PU_CTRL);
+	return nau7802_clearBit(dev, NAU7802_PU_CTRL_AVDDS, NAU7802_PU_CTRL);
 }
 
 //Power up digital and analog sections of scale
-int nau7802_powerUp()
+int nau7802_powerUp(const struct device *dev)
 {
-	nau7802_setBit(NAU7802_PU_CTRL_PUD, NAU7802_PU_CTRL);
-	nau7802_setBit(NAU7802_PU_CTRL_PUA, NAU7802_PU_CTRL);
+	int ret;
+	uint8_t data;
 
 	//Wait for Power Up bit to be set - takes approximately 200us
 	uint8_t counter = 0;
-	
-	while (1)
+
+	ret = nau7802_setBit(dev, NAU7802_PU_CTRL_PUD, NAU7802_PU_CTRL);
+	ret |= nau7802_setBit(dev, NAU7802_PU_CTRL_PUA, NAU7802_PU_CTRL);
+
+	while (ret == 0)
 	{
-		if (nau7802_getBit(NAU7802_PU_CTRL_PUR, NAU7802_PU_CTRL) == true)
+		nau7802_getBit(dev, NAU7802_PU_CTRL_PUR, NAU7802_PU_CTRL, &data);
+		if (data == 1)
 		{
 			break;				//Good to go
 		}
 		
-		/*delay(1);*/espera_ms(1);
+		k_msleep(1);
 		
 		if (counter++ > 100)
 		{
-			return (false);		//Error
+			return (-ETIME);		//Error
 		}
 	}
 	
-	return (true);
+	return ret;
 }
 
-int nau7802_check_chip_id(void){
+int nau7802_check_chip_id(const struct device *dev){
 	
-	return (nau7802_getRegister(NAU7802_DEVICE_REV) == NAU7802_CHIP_ID);
+	int ret;
+	uint8_t value;
+
+	ret = nau7802_getRegister(dev, NAU7802_DEVICE_REV, &value);
+
+	return (!(value == NAU7802_CHIP_ID) || ret);
 }
 
 //Puts scale into low-power mode
-int nau7802_powerDown()
+int nau7802_powerDown(const struct device *dev)
 {
-	nau7802_clearBit(NAU7802_PU_CTRL_PUD, NAU7802_PU_CTRL);
-	return (nau7802_clearBit(NAU7802_PU_CTRL_PUA, NAU7802_PU_CTRL));
+	nau7802_clearBit(dev, NAU7802_PU_CTRL_PUD, NAU7802_PU_CTRL);
+	return (nau7802_clearBit(dev, NAU7802_PU_CTRL_PUA, NAU7802_PU_CTRL));
 }
 
 
 //Resets all registers to Power Of Defaults
-int nau7802_reset()
+int nau7802_reset(const struct device *dev)
 {
-	nau7802_setBit(NAU7802_PU_CTRL_RR, NAU7802_PU_CTRL);				//Set RR
+	nau7802_setBit(dev, NAU7802_PU_CTRL_RR, NAU7802_PU_CTRL);				//Set RR
 		
-	espera_ms(1);
+	k_msleep(1);
 	
-	return nau7802_clearBit(NAU7802_PU_CTRL_RR, NAU7802_PU_CTRL);	//Clear RR to leave reset state
+	return nau7802_clearBit(dev, NAU7802_PU_CTRL_RR, NAU7802_PU_CTRL);	//Clear RR to leave reset state
 }
 
 
 //Set the onboard Low-Drop-Out voltage regulator to a given value
 //2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.2, 4.5V are available
-int nau7802_setLDO(uint8_t ldoValue)
+int nau7802_setLDO(const struct device *dev, uint8_t ldoValue)
 {
+	int ret;
+	uint8_t value;
+
 	if (ldoValue > 0b111)
 	{
 		ldoValue = 0b111;		//Error check
@@ -369,19 +413,24 @@ int nau7802_setLDO(uint8_t ldoValue)
 			break;
 	}
 	//Set the value of the LDO
-	uint8_t value = nau7802_getRegister(NAU7802_CTRL1);
+	ret = nau7802_getRegister(dev, NAU7802_CTRL1, &value);
+	
 	value &= 0b11000111;		//Clear LDO bits
 	value |= ldoValue << 3;		//Mask in new LDO bits
-	nau7802_setRegister(NAU7802_CTRL1, value);
+	
+	ret |= nau7802_setRegister(dev, NAU7802_CTRL1, value);
 
-	return (nau7802_setBit(NAU7802_PU_CTRL_AVDDS, NAU7802_PU_CTRL));	//Enable the internal LDO
+	return (nau7802_setBit(dev, NAU7802_PU_CTRL_AVDDS, NAU7802_PU_CTRL) || ret);	//Enable the internal LDO
 }
 
 
 //Set the gain
 //x1, 2, 4, 8, 16, 32, 64, 128 are avaialable
-int nau7802_setGain(uint8_t gainValue)
+int nau7802_setGain(const struct device *dev, uint8_t gainValue)
 {
+	int ret;
+	uint8_t value;
+
 	if (gainValue > 0b111)
 	{
 		gainValue = 0b111;		//Error check
@@ -389,11 +438,11 @@ int nau7802_setGain(uint8_t gainValue)
 #ifdef CONFIG_NAU7802_TEMP
 	gain_mode = gainValue;
 #endif
-	uint8_t value = nau7802_getRegister(NAU7802_CTRL1);
+	ret = nau7802_getRegister(dev, NAU7802_CTRL1, &value);
 	value &= 0b11111000;		//Clear gain bits
 	value |= gainValue;			//Mask in new bits
 
-	return (nau7802_setRegister(NAU7802_CTRL1, value));
+	return (nau7802_setRegister(dev, NAU7802_CTRL1, value) || ret);
 }
 
 #ifdef CONFIG_NAU7802_REV_CODE
@@ -407,43 +456,50 @@ uint8_t nau7802_getRevisionCode()
 
 //Returns 24-bit reading
 //Assumes CR Cycle Ready bit (ADC conversion complete) has been checked to be 1
-int32_t nau7802_getReading()
+int nau7802_getReading(const struct device *dev, int32_t *data)
 {
+	int ret;
 	uint32_t aux = 0;
 	int32_t value = 0;
+	uint8_t buf[4] = {0};
 	
-	aux = (uint32_t)(nau7802_getRegister(NAU7802_ADCO_B2) << 16);
+	ret = nau7802_getRegister(dev, NAU7802_ADCO_B2, &buf[2]);
+
+	ret |= nau7802_getRegister(dev, NAU7802_ADCO_B1, &buf[1]);
+
+	ret |= nau7802_getRegister(dev, NAU7802_ADCO_B1, &buf[0]);
+
+	if(ret == 0)
+	{
+		memcpy(&aux, buf, sizeof(value));
+
+		value = (int32_t) (aux << 8);
 	
-	aux |= (uint32_t)(nau7802_getRegister(NAU7802_ADCO_B1) << 8);
+		*data = (value >> 8) & 0x807FFFFF;
+	}
 	
-	aux |= (uint32_t)(nau7802_getRegister(NAU7802_ADCO_B0));
-	
-	value = (int32_t) (aux << 8);
-	
-	int32_t val = (value >> 8) & 0x807FFFFF;
-	
-	return val;
+	return ret;
 }
 
 //Set Int pin to be high when data is ready (default)
-int nau7802_setIntPolarityHigh()
+int nau7802_setIntPolarityHigh(const struct device *dev)
 {
-	return (nau7802_clearBit(NAU7802_CTRL1_CRP, NAU7802_CTRL1)); //0 = CRDY pin is high active (ready when 1)
+	return (nau7802_clearBit(dev, NAU7802_CTRL1_CRP, NAU7802_CTRL1)); //0 = CRDY pin is high active (ready when 1)
 }
 
 
 //Set Int pin to be low when data is ready
-int nau7802_setIntPolarityLow()
+int nau7802_setIntPolarityLow(const struct device *dev)
 {
-	return (nau7802_setBit(NAU7802_CTRL1_CRP, NAU7802_CTRL1)); //1 = CRDY pin is low active (ready when 0)
+	return (nau7802_setBit(dev, NAU7802_CTRL1_CRP, NAU7802_CTRL1)); //1 = CRDY pin is low active (ready when 0)
 }
 
 
 //Mask & set a given bit within a register
-int nau7802_setBit(uint8_t bitNumber, uint8_t registerAddress)
+int nau7802_setBit(const struct device *dev, uint8_t bitNumber, uint8_t registerAddress)
 {
 	uint8_t value;
-	int ret = nau7802_getRegister(registerAddress, &value);
+	int ret = nau7802_getRegister(dev, registerAddress, &value);
 
 	if(ret != 0)
 	{
@@ -452,29 +508,29 @@ int nau7802_setBit(uint8_t bitNumber, uint8_t registerAddress)
 
 	value |= (1 << bitNumber);		//Set this bit
 
-	return (nau7802_setRegister(registerAddress, value));
+	return (nau7802_setRegister(dev, registerAddress, value));
 }
 
 
 //Mask & clear a given bit within a register
-int nau7802_clearBit(uint8_t bitNumber, uint8_t registerAddress)
+int nau7802_clearBit(const struct device *dev, uint8_t bitNumber, uint8_t registerAddress)
 {
 	uint8_t value;
-	int ret = nau7802_getRegister(registerAddress, &value);
+	int ret = nau7802_getRegister(dev, registerAddress, &value);
 
 	if(ret != 0){return ret;}
 
 	value &= ~(1 << bitNumber);		//Set this bit
 
-	return (nau7802_setRegister(registerAddress, value));
+	return (nau7802_setRegister(dev, registerAddress, value));
 }
 
 
 //Return a given bit within a register
-int nau7802_getBit(uint8_t bitNumber, uint8_t registerAddress, uint8_t *data)
+int nau7802_getBit(const struct device *dev, uint8_t bitNumber, uint8_t registerAddress, uint8_t *data)
 {
 	uint8_t value;
-	int ret = nau7802_getRegister(registerAddress, &value);
+	int ret = nau7802_getRegister(dev, registerAddress, &value);
 
 	if(ret == 0)
 	{

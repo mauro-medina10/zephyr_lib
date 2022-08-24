@@ -215,8 +215,8 @@ int nau7802_trigger_set(const struct device *dev,
 
 int nau7802_setup_interrupt(const struct device *dev);
 
-int nau7802_setIntPolarityHigh();																
-int nau7802_setIntPolarityLow();
+int nau7802_setIntPolarityHigh(const struct device *dev);																
+int nau7802_setIntPolarityLow(const struct device *dev);
 int nau7802_disable_irq(void);
 int nau7802_enable_irq(void);
 #endif
@@ -227,32 +227,32 @@ int nau7802_attr_set(const struct device *dev,
 		     const struct sensor_value *val);
 
 
-int nau7802_begin(void);						
-int nau7802_start_conversions(void);
-int nau7802_stop_conversions(void);																
-int nau7802_reset(void);															
-int nau7802_powerUp(void);																		
-int nau7802_powerDown(void);																															
-int nau7802_calibrateAFE(void);	
+int nau7802_begin(const struct device *dev);						
+int nau7802_start_conversions(const struct device *dev);
+int nau7802_stop_conversions(const struct device *dev);																
+int nau7802_reset(const struct device *dev);															
+int nau7802_powerUp(const struct device *dev);																		
+int nau7802_powerDown(const struct device *dev);																															
+int nau7802_calibrateAFE(const struct device *dev);	
 
-int nau7802_check_chip_id(void);
+int nau7802_check_chip_id(const struct device *dev);
 
 //Fetch		
-int nau7802_getReading(int32_t *data);																	
-int nau7802_data_available(void);
+int nau7802_getReading(const struct device *dev, int32_t *data);																	
+int nau7802_data_available(const struct device *dev);
 
 //Attributes 
-int nau7802_setGain(uint8_t gainValue);													
-int nau7802_setLDO(uint8_t ldoValue);															
-int nau7802_setSampleRate(uint8_t rate);														
-int nau7802_setChannel(uint8_t channelNumber);													
-int nau7802_LDO_on(void);
-int nau7802_LDO_off(void);	
+int nau7802_setGain(const struct device *dev, uint8_t gainValue);													
+int nau7802_setLDO(const struct device *dev, uint8_t ldoValue);															
+int nau7802_setSampleRate(const struct device *dev, uint8_t rate);														
+int nau7802_setChannel(const struct device *dev, uint8_t channelNumber);													
+int nau7802_LDO_on(const struct device *dev);
+int nau7802_LDO_off(const struct device *dev);	
 
 //Comunication
-int nau7802_setBit(uint8_t bitNumber, uint8_t registerAddress);					//Mask & set a given bit within a register
-int nau7802_clearBit(uint8_t bitNumber, uint8_t registerAddress);				//Mask & clear a given bit within a register
-int nau7802_getBit(uint8_t bitNumber, uint8_t registerAddress, uint8_t *data);					//Return a given bit within a register
+int nau7802_setBit(const struct device *dev, uint8_t bitNumber, uint8_t registerAddress);					//Mask & set a given bit within a register
+int nau7802_clearBit(const struct device *dev, uint8_t bitNumber, uint8_t registerAddress);				//Mask & clear a given bit within a register
+int nau7802_getBit(const struct device *dev, uint8_t bitNumber, uint8_t registerAddress, uint8_t *data);					//Return a given bit within a register
 int nau7802_getRegister(const struct device *dev, uint8_t registerAddress, uint8_t *value);				//Get contents of a register
 int nau7802_setRegister(const struct device *dev, uint8_t registerAddress, uint8_t value);				//Send a given value to be written to given address. Return true if successful
 

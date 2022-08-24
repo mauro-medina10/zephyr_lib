@@ -69,7 +69,8 @@ int32_t I2C_byte_transfer(uint8_t reg_addr, uint8_t data)
 	msgs.len = 2U;
 	msgs.flags = I2C_MSG_WRITE | I2C_MSG_STOP;
 
-	return i2c_transfer(i2c_dev, &msgs, 1, dev_addr);
+	//return i2c_transfer(i2c_dev, &msgs, 1, dev_addr);
+	return i2c_reg_write_byte(i2c_dev, dev_addr, reg_addr, data);
 }
 
 //----------------------------------------------------------------------
@@ -97,7 +98,8 @@ int32_t I2C_byte_read(uint8_t reg_addr, uint8_t *data)
 	msgs[1].len = 1U;
 	msgs[1].flags = I2C_MSG_RESTART | I2C_MSG_READ | I2C_MSG_STOP;
 
-	return i2c_transfer(i2c_dev, msgs, 2, dev_addr);
+	//return i2c_transfer(i2c_dev, msgs, 2, dev_addr);
+	return i2c_write_read(i2c_dev, dev_addr, &reg_addr, 1U, data, 1U);
 }
 
 //----------------------------------------------------------------------
