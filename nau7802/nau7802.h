@@ -21,11 +21,24 @@
 #define NAU7802_SETTLE_SAMPLES 		6
 #define NAU7802_MAX_CNT 			(1 << 23)
 
+#define NAU7802_DATA_TIMEOUT_MS		1000
+
+//Custom attribute definitions
+#define SENSOR_ATTR_LDO (SENSOR_ATTR_PRIV_START + 1)
+#define SENSOR_ATTR_GAIN (SENSOR_ATTR_PRIV_START + 2)
+#define SENSOR_ATTR_CHN (SENSOR_ATTR_PRIV_START + 3)
+
 //TEMPERATURE MODE
 #define NAU7802_TEMP_REF_C 		25
 #define NAU7802_TEMP_REF_MV 	109
 #define NAU7802_TEMP_DELTA_UV 	360
 
+//Attribute get macros
+#define NAU7802_CAL(reg) (reg & 0x03)
+#define NAU7802_SPS(reg) (reg & 0x70)
+#define NAU7802_CHN(reg) (reg & 0x80)
+#define NAU7802_LDO(reg) (reg & 0x38)
+#define NAU7802_GAIN(reg)(reg & 0x07)
 //Register Map
 typedef enum
 {

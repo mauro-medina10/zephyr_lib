@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define DT_DRV_COMPAT nuvoton_nau7802
+
 //----------------------------------------------------------------------
 //	INCLUCIÓN DE ARCHIVOS
 //----------------------------------------------------------------------
@@ -16,7 +18,10 @@
 
 #include "nau7802.h"	
 #include <drivers/i2c.h>
+#include <logging/log.h>
+#include <pm/device.h>
 
+LOG_MODULE_REGISTER(nau7802, CONFIG_SENSOR_LOG_LEVEL);
 //----------------------------------------------------------------------
 //	MACROS
 //----------------------------------------------------------------------
@@ -94,18 +99,29 @@ static int32_t get_irq_data(void){
 //If initialize is true (or not specified), default init and calibration is performed
 //If initialize is false, then it's up to the caller to initalize and calibrate
 //Returns true upon completion
-int nau7802_begin(const struct device *dev)
+static int nau7802_begin(const struct device *dev)
 {
+	const struct nau7802_config *const config = dev->config;
 	int ret = 0;		//Accumulate a result as we do the setup
 
+	if (!device_is_ready(config->bus.bus)) {
+		LOG_ERR("I2C bus %s is not ready", config->bus.bus->name);
+		return -ENODEV;
+	}
+
 	ret = nau7802_powerUp(dev);											//Power on analog and digital sections of the scale
-
-	ret |= nau7802_check_chip_id(dev);
-
-	if(ret != 0)
-	{
+	if (ret < 0) {
+		LOG_ERR("Failed to power up device.");
 		return ret;
 	}
+
+	ret = nau7802_check_chip_id(dev);
+	if(ret <= 0)
+	{
+		LOG_ERR("Chip ID error.");
+		return ret;
+	}
+
 #if (CONFIG_NAU7802_LDO == 8)
 	result |= nau7802_LDO_off(dev);
 #else
@@ -117,32 +133,133 @@ int nau7802_begin(const struct device *dev)
 	
 	ret |= nau7802_setRegister(dev, NAU7802_ADC, 0x30);						//Turn off CLK_CHP. From 9.1 power on sequencing.	
 #ifdef CONFIG_NAU7802_SINGLE_CHN
-	result &= nau7802_setBit(dev, NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);	//Enable 330pF decoupling cap on chan 2. From 9.14 application circuit note
+	ret |= nau7802_setBit(dev, NAU7802_PGA_PWR_PGA_CAP_EN, NAU7802_PGA_PWR);	//Enable 330pF decoupling cap on chan 2. From 9.14 application circuit note
 #endif	
-	ret |= nau7802_calibrateAFE(dev);										//Re-cal analog front end when we change gain, sample rate, or channel
-	
-	//Get 6 samples to stabilize adc
-	if(ret == 0)
+	if(ret <= 0)
 	{
-#ifdef CONFIG_NAU7802_TRIGGER		
-		nau7802_internal_irq_enable();
-#endif		
-		nau7802_start_conversions(dev);
-		for(uint8_t i = 0; i < NAU7802_SETTLE_SAMPLES; i++){
-#ifdef CONFIG_NAU7802_TRIGGER
-			get_irq_data();
-#else
-			while(nau7802_data_available(dev) != 0);
-
-			nau7802_getReading(dev, NULL);
-#endif
-		}
-#ifdef CONFIG_NAU7802_TRIGGER		
-		nau7802_internal_irq_disable();
-#endif		
-		nau7802_stop_conversions(dev);
+		LOG_ERR("Configuration error.");
+		return ret;
 	}
+
+	ret = nau7802_calibrateAFE(dev);										//Re-cal analog front end when we change gain, sample rate, or channel
+	if(ret <= 0)
+	{
+		LOG_ERR("Calibration error.");
+		return ret;
+	}
+
+	//Get 6 samples to stabilize adc
+#ifdef CONFIG_NAU7802_TRIGGER		
+	nau7802_internal_irq_enable();
+#endif		
+	ret = nau7802_start_conversions(dev);
+	if(ret <= 0)
+	{
+		LOG_ERR("Estabilization error.")
+		return ret;
+	}
+	int64_t t_init = k_uptime_get();
+	for(uint8_t i = 0; i < NAU7802_SETTLE_SAMPLES; i++){
+#ifdef CONFIG_NAU7802_TRIGGER
+		get_irq_data();
+#else
+		while(nau7802_data_available(dev) != 0)
+		{
+			if((k_uptime_get() - t_init) > NAU7802_DATA_TIMEOUT_MS)
+				break;
+			k_msleep(10);	
+		}
+		nau7802_getReading(dev, NULL);
+#endif
+	}
+#ifdef CONFIG_NAU7802_TRIGGER		
+	nau7802_internal_irq_disable();
+#endif		
+	ret = nau7802_stop_conversions(dev);
+	
 	return (ret);
+}
+
+/**
+ * @brief sensor attribute set
+ *
+ * @retval 0 for success
+ * @retval -ENOTSUP for unsupported channels
+ * @retval -EIO for i2c write failure
+ */
+static int nau7802_attr_set(const struct device *dev, enum sensor_channel chan,
+			   enum sensor_attribute attr,
+			   const struct sensor_value *val)
+{
+	const struct nau7802_config *config = dev->config;
+	uint16_t data = val->val1;
+
+	switch (attr) {
+		case SENSOR_ATTR_SAMPLING_FREQUENCY:
+			return nau7802_setSampleRate(dev, data);
+		case SENSOR_ATTR_CALIB_TARGET:
+			return 0;
+		case SENSOR_ATTR_LDO:
+			return nau7802_setLDO(dev, data);
+		case SENSOR_ATTR_GAIN:
+			return nau7802_setGain(dev, data);
+		case SENSOR_ATTR_CHN:
+			return nau7802_setChannel(dev, data);
+		default:
+			LOG_ERR("NAU7802 attribute not supported.");
+			return -ENOTSUP;
+	}
+}
+
+/**
+ * @brief sensor attribute get
+ *
+ * @retval 0 for success
+ * @retval -ENOTSUP for unsupported channels
+ * @retval -EIO for i2c read failure
+ */
+static int nau7802_attr_get(const struct device *dev, enum sensor_channel chan,
+			   enum sensor_attribute attr,
+			   struct sensor_value *val)
+{
+	const struct ina230_config *config = dev->config;
+	uint16_t data;
+	uint8_t reg;
+	int ret;
+
+	switch (attr) {
+		case SENSOR_ATTR_SAMPLING_FREQUENCY:
+			ret = nau7802_getRegister(dev, NAU7802_CTRL2, &reg);
+			data = NAU7802_SPS(reg);
+			break;
+		case SENSOR_ATTR_CALIB_TARGET:
+			ret = nau7802_getRegister(dev, NAU7802_CTRL2, &reg);
+			data = NAU7802_CAL(reg);
+			break;
+		case SENSOR_ATTR_LDO:
+			ret = nau7802_getRegister(dev, NAU7802_CTRL1, &reg);
+			data = NAU7802_LDO(reg);
+			break;
+		case SENSOR_ATTR_GAIN:
+			ret = nau7802_getRegister(dev, NAU7802_CTRL1, &reg);
+			data = NAU7802_GAIN(reg);
+			break;
+		case SENSOR_ATTR_CHN:
+			ret = nau7802_getRegister(dev, NAU7802_CTRL2, &reg);
+			data = NAU7802_CHN(reg);
+			break;
+		default:
+			LOG_ERR("NAU7802 attribute not supported.");
+			return -ENOTSUP;
+	}
+
+	if (ret < 0) {
+		return ret;
+	}
+	val->val1 = data;
+	val->val2 = 0;
+
+	return 0;
 }
 
 int nau7802_start_conversions(const struct device *dev){
@@ -618,3 +735,47 @@ static int32_t nau7802_internal_irq_disable(void){
 	return nau7802_disable_irq();
 }
 #endif
+
+static const struct sensor_driver_api nau7802_driver_api = {
+	.attr_set = nau7802_attr_set,
+	.attr_get = nau7802_attr_get,
+#ifdef CONFIG_NAU7802_TRIGGER
+	.trigger_set = nau7802_trigger_set,
+#endif
+	.sample_fetch = nau7802_sample_fetch,
+	.channel_get = nau7802_channel_get,
+};
+
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 0
+#warning "NAU7802 driver enabled without any devices"
+#endif
+
+#ifdef CONFIG_NAU7802_TRIGGER
+#define NAU7802_CFG_IRQ(inst)				\
+	.trig_enabled = true,				\
+	.mask = DT_INST_PROP(inst, mask),		\
+	.alert_limit = DT_INST_PROP(inst, alert_limit),	\
+	.gpio_alert = GPIO_DT_SPEC_INST_GET(inst, irq_gpios)
+#else
+#define NAU7802_CFG_IRQ(inst)
+#endif /* CONFIG_NAU7802_TRIGGER */
+
+#define NAU7802_DEVICE_INIT(inst)					\
+	static struct nau7802_data drv_data_##inst;		    \
+	static const struct nau7802_config drv_config_##inst = {	    \
+		.bus = I2C_DT_SPEC_INST_GET(inst),		    \
+		.config = DT_INST_PROP(inst, config),		    \
+		.current_lsb = DT_INST_PROP(inst, current_lsb),	    \
+		.rshunt = DT_INST_PROP(inst, rshunt),		    \
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, irq_gpios), \
+			    (NAU7802_CFG_IRQ(inst)), ())		    \
+	};							    \
+	DEVICE_DT_INST_DEFINE(inst,					\
+			    nau7802_begin,				\
+			    &nau7802_data_##inst,			\
+			    &nau7802_config_##inst,			\
+			    POST_KERNEL,				\
+			    CONFIG_SENSOR_INIT_PRIORITY,		\
+			    &nau7802_driver_api);
+
+DT_INST_FOREACH_STATUS_OKAY(NAU7802_DRIVER_INIT)
